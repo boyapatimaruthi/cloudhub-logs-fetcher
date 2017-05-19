@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:file="http://www.mulesoft.org/schema/mule/file" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:objectstore="http://www.mulesoft.org/schema/mule/objectstore" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:batch="http://www.mulesoft.org/schema/mule/batch" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:context="http://www.springframework.org/schema/context" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-current.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/objectstore http://www.mulesoft.org/schema/mule/objectstore/current/mule-objectstore.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd">
+    <context:property-placeholder location="${env}.properties"/>
+    <http:request-config name="HTTP_Request_Configuration_AnyPoint_Platfrom" protocol="HTTPS" host="anypoint.mulesoft.com" port="443" doc:name="HTTP Request Configuration" connectionIdleTimeout="50000" enableCookies="true"/>
+    <objectstore:config name="ObjectStore__Connector" partition="mypartition" entryTtl="0" expirationInterval="0" maxEntries="0" persistent="true" doc:name="ObjectStore: Connector"/>
+    <file:connector name="File" autoDelete="false" streaming="true" validateConnections="true" doc:name="File"/>
+    <flow name="cloudhub-logs-fetcherFlow">
+        <poll doc:name="Poll">
+            <fixed-frequency-scheduler frequency="59" timeUnit="MINUTES" />
+            <logger message="Initiated  Fetching or Updating OAuth Access_Token" level="INFO" doc:name="Logger"/>
+        </poll>
+        <flow-ref name="fetch-Anypoint-OAuth-Token-Flow" doc:name="fetch-Anypoint-OAuth-Token-Flow"/>
+    </flow>
+    <flow name="fetch-organization-flow">
+        <objectstore:retrieve config-ref="ObjectStore__Connector" key="anypoint_access_token" doc:name="Retrieve access Token From Object Store"/>
+        <logger message="#[message.payloadAs(java.lang.String)]" level="INFO" doc:name="Logger"/>
+        <set-property propertyName="Authorization" value="Bearer #[message.payloadAs(java.lang.String)]" doc:name="Set Authorization Header"/>
+        <http:request config-ref="HTTP_Request_Configuration_AnyPoint_Platfrom" path="/accounts/api/me" method="GET" doc:name="HTTP Request to GET Account Info"/>
+        <json:json-to-object-transformer returnClass="java.lang.Object" mimeType="application/java" doc:name="JSON to Object"/>
+        <set-variable variableName="anypoint_user_details" value="#[payload]" doc:name="Back Up User Info Payload Flow Var"/>
+        <logger level="INFO" doc:name="Logger" message="#[message.payloadAs(java.lang.String)]"/>
+        <objectstore:store config-ref="ObjectStore__Connector" key="anypoint_organization_id" value-ref="#[flowVars.anypoint_user_details.user.organization.id]" overwrite="true" doc:name="Store Organization_Id In Object Store"/>
+        <objectstore:store config-ref="ObjectStore__Connector" key="anypoint_organization_name" value-ref="#[flowVars.anypoint_user_details.user.organization.name]" overwrite="true" doc:name="Store Organization_name In Object Store"/>
+        <!-- <flow-ref name="fetch-all-environments" doc:name="fetch-all-environments"/> -->
+    </flow>
+    <flow name="fetch-Anypoint-OAuth-Token-Flow" >
+        <logger message="Creating New Anypoint Access Token" level="INFO" doc:name="Logger"/>
+        <dw:transform-message doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+	username: '${anypoint.username}',
+	password: '${anypoint.password}'
+}]]></dw:set-payload>
+        </dw:transform-message>
+        <set-property propertyName="Content-Type" value="application/json" doc:name="Set Content Type Header" mimeType="text/plain"/>
+        <http:request config-ref="HTTP_Request_Configuration_AnyPoint_Platfrom" path="/accounts/login" method="POST" doc:name="HTTP GET All ENVIRONMENTS"/>
+        <json:json-to-object-transformer returnClass="java.lang.Object" mimeType="application/java" doc:name="JSON to Object"/>
+        <logger message="New Access token JSON Info:::  #[message.payloadAs(java.lang.String)]  + #[payload.access_token]" level="INFO" doc:name="Logger"/>
+        <objectstore:store config-ref="ObjectStore__Connector" key="anypoint_access_token" value-ref="#[payload.access_token]" overwrite="true" doc:name="Store Access Token In Object Store"/>
+        <flow-ref name="fetch-organization-flow" doc:name="fetch-organization-flow"/>
+        <catch-exception-strategy doc:name="Catch Exception Strategy">
+            <logger message="Error Getting Access Token ::: Cause : #[message.payloadAs(java.lang.String)]" level="ERROR" doc:name="Logger"/>
+        </catch-exception-strategy>
+    </flow>
+    <flow name="fetch-all-environments">
+    <poll doc:name="Poll">
+            <fixed-frequency-scheduler frequency="100" startDelay="10" timeUnit="SECONDS"/>
+            <logger message="Initiated Fetching Logs" level="INFO" doc:name="Logger"/>
+        </poll>
+        <logger message="Getting All Enviroments" level="INFO" doc:name="Logger"/>
+        <objectstore:retrieve config-ref="ObjectStore__Connector" key="anypoint_access_token" doc:name="Retrieve access Token From Object Store"/>
+        <set-property propertyName="Authorization" value="Bearer #[message.payloadAs(java.lang.String)]" doc:name="Set Authorization Header"/>
+        <objectstore:retrieve config-ref="ObjectStore__Connector" key="anypoint_organization_id" doc:name="Retrieve Organization From Object Store"/>
+        <http:request config-ref="HTTP_Request_Configuration_AnyPoint_Platfrom" path="/accounts/api/organizations/#[message.payloadAs(java.lang.String)]/environments" method="GET" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.lang.Object" mimeType="application/java" doc:name="JSON to Object"/>
+        <objectstore:store config-ref="ObjectStore__Connector" key="all_environments_object" value-ref="#[payload]" overwrite="true" doc:name="Store All Environment Object In Object Store"/>
+        <flow-ref name="fetch-all-applications" doc:name="fetch-all-applications"/>
+    </flow>
+    <flow name="fetch-all-applications">
+        <logger message="Getting All Applications -------------------------------------------&gt;&gt;&gt;&gt;&gt;" level="INFO" doc:name="Logger"/>
+        <objectstore:retrieve config-ref="ObjectStore__Connector" key="anypoint_access_token" doc:name="Retrieve access Token From Object Store"/>
+        <set-property propertyName="Authorization" value="Bearer #[message.payloadAs(java.lang.String)]" doc:name="Set Authorization Header"/>
+        <objectstore:retrieve config-ref="ObjectStore__Connector" key="all_environments_object" doc:name="Retrieve all_environments_object From Object Store"/>
+        <set-payload value="#[payload.data]" mimeType="application/java" doc:name="Set Payload"/>
+        <batch:execute name="for-each-environment-Batch" doc:name="for-each-environment-Batch"/>
+    </flow>
+    <batch:job name="for-each-environment-Batch">
+        <batch:process-records>
+            <batch:step name="for-each-environment-BatchStep">
+                <logger message="for-each-environment-Batch #[message.payloadAs(java.lang.String)]" level="INFO" doc:name="Logger"/>
+                <batch:set-record-variable variableName="environment" value="#[payload]" doc:name="Backup Environment Record Variable"/>
+                <objectstore:retrieve config-ref="ObjectStore__Connector" key="anypoint_access_token" doc:name="Retrieve access Token From Object Store"/>
+                <set-property propertyName="Authorization" value="Bearer #[message.payloadAs(java.lang.String)]" doc:name="Set Authorization Header"/>
+                <set-property propertyName="X-ANYPNT-ENV-ID" value="#[payload.id]" doc:name="Set X-ANYPNT-ENV-ID Header"/>
+                <logger message="Before HTTP Record Var Environment ---------------&gt; #[recordVars.environment]" level="INFO" doc:name="Logger"/>
+                <http:request config-ref="HTTP_Request_Configuration_AnyPoint_Platfrom" path="/cloudhub/api/v2/applications" method="GET" doc:name="HTTP"/>
+                <logger message="Record Var Environment ---------------&gt; #[recordVars.environment]" level="INFO" doc:name="Logger"/>
+                <dw:transform-message doc:name="Transform Message">
+                    <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+payload map {
+environment: recordVars.environment,
+application: $
+}]]></dw:set-payload>
+                </dw:transform-message>
+                <json:json-to-object-transformer returnClass="java.lang.Object" mimeType="application/java" doc:name="JSON to Object"/>
+                <batch:execute name="for-each-application-Batch" doc:name="for-each-application-Batch"/>
+            </batch:step>
+        </batch:process-records>
+    </batch:job>
+    <batch:job name="for-each-application-Batch">
+        <batch:process-records>
+            <batch:step name="Batch_Step1">
+                <logger message="for-each-application-Batch Domain:::: #[payload.application.domain] + Environment ::: #[payload.environment.name] " level="INFO" doc:name="Logger"/>
+                <batch:set-record-variable variableName="application" value="#[payload]" doc:name="Back Up of Application record Variable"/>
+                <set-property propertyName="X-ANYPNT-ENV-ID" value=" #[payload.environment.id]" doc:name="Set X-ANYPNT-ENV-ID Header"/>
+                <objectstore:retrieve config-ref="ObjectStore__Connector" key="anypoint_access_token" doc:name="Retrieve access Token From Object Store"/>
+                <set-property propertyName="Authorization" value="Bearer #[message.payloadAs(java.lang.String)]" doc:name="Set Authorization Header"/>
+                <http:request config-ref="HTTP_Request_Configuration_AnyPoint_Platfrom" path="/cloudhub/api/v2/applications/#[recordVars.application.application.domain]/deployments" method="GET" doc:name="HTTP"/>
+                <logger message="#[message.payloadAs(java.lang.String)]" level="ERROR" doc:name="Logger"/>
+                <json:json-to-object-transformer returnClass="message.transformers.models.Records" mimeType="application/java" doc:name="JSON to Object"/>
+                <custom-transformer class="message.transformers.RecordsTransFormer" doc:name="Java"/>
+                <logger level="INFO" doc:name="Logger"/>
+                <dw:transform-message doc:name="Transform Message">
+                    <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+payload map {
+	application: recordVars.application,
+	instance: $ as :object {class: "message.transformers.models.Instance"}
+}]]></dw:set-payload>
+                </dw:transform-message>
+                <batch:execute name="for-each-instance-Batch" doc:name="for-each-instance-Batch"/>
+            </batch:step>
+        </batch:process-records>
+    </batch:job>
+    <batch:job name="for-each-instance-Batch">
+        <batch:process-records>
+            <batch:step name="Batch_Step">
+                <logger message="Environment :::  #[payload.application.environment.id] + Application :::: #[payload.application.application.domain] +Instance ::: #[payload.instance.instanceId]" level="INFO" doc:name="Logger"/>
+                <batch:set-record-variable variableName="instance" value="#[payload]" doc:name="Back Up of Instance record Variable"/>
+                <set-property propertyName="X-ANYPNT-ENV-ID" value="#[payload.application.environment.id]" doc:name="Set X-ANYPNT-ENV-ID Header"/>
+                <objectstore:retrieve config-ref="ObjectStore__Connector" key="anypoint_organization_name" doc:name="Retrieve Organization From Object Store"/>
+                <batch:set-record-variable variableName="anypoint_organization_name" value="#[message.payloadAs(java.lang.String)]" doc:name="Organization Name Record Var"/>
+                <objectstore:retrieve config-ref="ObjectStore__Connector" key="anypoint_access_token" doc:name="Retrieve access Token From Object Store"/>
+                <set-property propertyName="Authorization" value="Bearer #[message.payloadAs(java.lang.String)]" doc:name="Set Authorization Header"/>
+                <http:request config-ref="HTTP_Request_Configuration_AnyPoint_Platfrom" path="/cloudhub/api/v2/applications/#[recordVars.instance.application.application.domain]/instances/#[recordVars.instance.instance.instanceId]/log-file" method="GET" doc:name="HTTP"/>
+                <object-to-string-transformer returnClass="java.lang.String" doc:name="Object to String"/>
+                <logger message="C:\Users\maruthib\Desktop\generated-logs\#[recordVars.instance.application.environment.name]\#[recordVars.instance.application.application.domain]\#[recordVars.instance.instance.instanceId]\#[server.dateTime.format(&quot;HH-mm-DD-MM-YYYY&quot;)]-#[recordVars.instance.application.application.domain]-#[recordVars.instance.instance.region]-#[recordVars.instance.application.environment.name].log" level="INFO" doc:name="Logger"/>
+                <file:outbound-endpoint path="C:\Users\maruthib\Desktop\generated-logs\#[recordVars.anypoint_organization_name]\#[recordVars.instance.application.environment.name]\#[recordVars.instance.application.application.domain]\#[recordVars.instance.instance.instanceId]-#[recordVars.instance.instance.region]\" outputPattern="#[server.dateTime.format(&quot;HH-mm-ss-dd-MM-YYYY&quot;)]-#[recordVars.instance.application.application.domain]-#[recordVars.instance.instance.region]-#[recordVars.instance.application.environment.name].logs" connector-ref="File" responseTimeout="10000" doc:name="Write Logs To a File in Local File System"/>
+            </batch:step>
+        </batch:process-records>
+    </batch:job>
+  <!--   <batch:job name="for-each-worker-Batch">
+        <batch:process-records>
+            <batch:step name="Batch_Step2"/>
+        </batch:process-records>
+    </batch:job> -->
+</mule>

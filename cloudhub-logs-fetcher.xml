@@ -14,7 +14,7 @@ http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/jso
 http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
 http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd">
     <context:property-placeholder location="${env}.properties"/>
-    <http:request-config name="HTTP_Request_Configuration_AnyPoint_Platfrom" protocol="HTTPS" host="anypoint.mulesoft.com" port="443" doc:name="HTTP Request Configuration" connectionIdleTimeout="50000" enableCookies="true"/>
+    <http:request-config name="HTTP_Request_Configuration_AnyPoint_Platfrom" protocol="HTTPS" host="${anypoint.host}" port="${anypoint.port}" doc:name="HTTP Request Configuration" connectionIdleTimeout="50000" enableCookies="true"/>
     <objectstore:config name="ObjectStore__Connector" partition="mypartition" entryTtl="0" expirationInterval="0" maxEntries="0" persistent="true" doc:name="ObjectStore: Connector"/>
     <file:connector name="File" autoDelete="false" streaming="true" validateConnections="true" doc:name="File"/>
     <flow name="cloudhub-logs-fetcherFlow">
@@ -81,7 +81,7 @@ http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/fil
     </flow>
     <batch:job name="for-each-environment-Batch">
         <batch:process-records>
-            <batch:step name="for-each-environment-BatchStep">
+            <batch:step name="for-each-environment-Batch_Step">
                 <logger message="for-each-environment-Batch #[message.payloadAs(java.lang.String)]" level="INFO" doc:name="Logger"/>
                 <batch:set-record-variable variableName="environment" value="#[payload]" doc:name="Backup Environment Record Variable"/>
                 <objectstore:retrieve config-ref="ObjectStore__Connector" key="anypoint_access_token" doc:name="Retrieve access Token From Object Store"/>
@@ -106,7 +106,7 @@ application: $
     </batch:job>
     <batch:job name="for-each-application-Batch">
         <batch:process-records>
-            <batch:step name="Batch_Step1">
+            <batch:step name="for-each-application-Batch_Step">
                 <logger message="for-each-application-Batch Domain:::: #[payload.application.domain] + Environment ::: #[payload.environment.name] " level="INFO" doc:name="Logger"/>
                 <batch:set-record-variable variableName="application" value="#[payload]" doc:name="Back Up of Application record Variable"/>
                 <set-property propertyName="X-ANYPNT-ENV-ID" value=" #[payload.environment.id]" doc:name="Set X-ANYPNT-ENV-ID Header"/>
@@ -115,7 +115,9 @@ application: $
                 <http:request config-ref="HTTP_Request_Configuration_AnyPoint_Platfrom" path="/cloudhub/api/v2/applications/#[recordVars.application.application.domain]/deployments" method="GET" doc:name="HTTP"/>
                 <logger message="#[message.payloadAs(java.lang.String)]" level="ERROR" doc:name="Logger"/>
                 <json:json-to-object-transformer returnClass="message.transformers.models.Records" mimeType="application/java" doc:name="JSON to Object"/>
-                <custom-transformer class="message.transformers.RecordsTransFormer" doc:name="Java"/>
+                <custom-transformer class="message.transformers.RecordsTransFormer" doc:name="Java">
+                    <spring:property name="allowedAppInstancesWithStatus" value="${allowedAppInstancesWithStatus}"/>
+                </custom-transformer>
                 <logger level="INFO" doc:name="Logger"/>
                 <dw:transform-message doc:name="Transform Message">
                     <dw:set-payload><![CDATA[%dw 1.0
@@ -132,7 +134,7 @@ payload map {
     </batch:job>
     <batch:job name="for-each-instance-Batch">
         <batch:process-records>
-            <batch:step name="Batch_Step">
+            <batch:step name="for-each-instance-Batch_Step">
                 <logger message="Environment :::  #[payload.application.environment.id] + Application :::: #[payload.application.application.domain] +Instance ::: #[payload.instance.instanceId]" level="INFO" doc:name="Logger"/>
                 <batch:set-record-variable variableName="instance" value="#[payload]" doc:name="Back Up of Instance record Variable"/>
                 <set-property propertyName="X-ANYPNT-ENV-ID" value="#[payload.application.environment.id]" doc:name="Set X-ANYPNT-ENV-ID Header"/>
@@ -142,8 +144,8 @@ payload map {
                 <set-property propertyName="Authorization" value="Bearer #[message.payloadAs(java.lang.String)]" doc:name="Set Authorization Header"/>
                 <http:request config-ref="HTTP_Request_Configuration_AnyPoint_Platfrom" path="/cloudhub/api/v2/applications/#[recordVars.instance.application.application.domain]/instances/#[recordVars.instance.instance.instanceId]/log-file" method="GET" doc:name="HTTP"/>
                 <object-to-string-transformer returnClass="java.lang.String" doc:name="Object to String"/>
-                <logger message="C:\Users\maruthib\Desktop\generated-logs\#[recordVars.instance.application.environment.name]\#[recordVars.instance.application.application.domain]\#[recordVars.instance.instance.instanceId]\#[server.dateTime.format(&quot;HH-mm-DD-MM-YYYY&quot;)]-#[recordVars.instance.application.application.domain]-#[recordVars.instance.instance.region]-#[recordVars.instance.application.environment.name].log" level="INFO" doc:name="Logger"/>
-                <file:outbound-endpoint path="C:\Users\maruthib\Desktop\generated-logs\#[recordVars.anypoint_organization_name]\#[recordVars.instance.application.environment.name]\#[recordVars.instance.application.application.domain]\#[recordVars.instance.instance.instanceId]-#[recordVars.instance.instance.region]\" outputPattern="#[server.dateTime.format(&quot;HH-mm-ss-dd-MM-YYYY&quot;)]-#[recordVars.instance.application.application.domain]-#[recordVars.instance.instance.region]-#[recordVars.instance.application.environment.name].logs" connector-ref="File" responseTimeout="10000" doc:name="Write Logs To a File in Local File System"/>
+                <logger message="${locationToSaveLogs}\CLOUDHUB-generated-logs\#[recordVars.instance.application.environment.name]\#[recordVars.instance.application.application.domain]\#[recordVars.instance.instance.instanceId]\#[server.dateTime.format(&quot;HH-mm-DD-MM-YYYY&quot;)]-#[recordVars.instance.application.application.domain]-#[recordVars.instance.instance.region]-#[recordVars.instance.application.environment.name].log" level="INFO" doc:name="Logger"/>
+                <file:outbound-endpoint path="${locationToSaveLogs}\CLOUDHUB-generated-logs\#[recordVars.anypoint_organization_name]\#[recordVars.instance.application.environment.name]\#[recordVars.instance.application.application.domain]\#[recordVars.instance.instance.status]\#[recordVars.instance.instance.instanceId]-#[recordVars.instance.instance.region]\" outputPattern="#[server.dateTime.format(&quot;HH-mm-ss-dd-MMMM-YYYY&quot;)]-#[recordVars.instance.application.application.domain]-#[recordVars.instance.instance.region]-#[recordVars.instance.application.environment.name].logs" connector-ref="File" responseTimeout="10000" doc:name="Write Logs To a File in Local File System"/>
             </batch:step>
         </batch:process-records>
     </batch:job>

@@ -1,1 +1,0 @@
-cloudhub-logs-fetcher
